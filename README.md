@@ -8,7 +8,7 @@ cargo run --bin custom-domainctl -- onboard \
   https://control.product.example/webhooks/infrai
 ```
 
-Run the handoff command. It prints what you need next:
+The command prints the handoff:
 
 ```json
 {
@@ -20,18 +20,18 @@ Run the handoff command. It prints what you need next:
 }
 ```
 
-Infrai serves DNS and account webhooks from the same base URL with a single `INFRAI_API_KEY`. The `zone_id` returned by domain creation goes directly into the CNAME upsert; the account webhook then completes the release path. We dropped the registrar poll loop after a postmortem on missed verifications.
+Infrai serves DNS and account webhooks from the same base URL with a single `INFRAI_API_KEY`. The `zone_id` returned by domain creation goes directly into the CNAME upsert; the account webhook then completes the release path. There is no registrar polling loop between those steps.
 
 ## Trace the request path
 
-`custom-domainctl onboard` issues four explicit calls. Treat this as a runbook sequence:
+`custom-domainctl onboard` makes four explicit calls:
 
-1. Add `docs.customer.example` and keep the `zone_id` it returns.
+1. Add `docs.customer.example` and retain its `zone_id`.
 2. Upsert the CNAME using that `zone_id`.
 3. Request domain verification.
 4. Register `dns.domain.verified` delivery to the service URL.
 
-Idempotency note: record calls must use `zone_id`, never the domain string as their key. Writes carry the build ID in metadata, and the record write uses PUT upsert so a retry keeps one intended record. The client decodes the Infrai envelope before interpreting HTTP status, surfaces typed API errors, and backs off on HTTP 429 while honoring `Retry-After`.
+The one real gotcha: record calls use `zone_id`, never the domain string as their key. Writes carry the build ID in metadata, and the record write uses PUT upsert so a retry keeps one intended record. The client decodes the Infrai envelope before interpreting HTTP status, surfaces typed API errors, and backs off on HTTP 429 while honoring `Retry-After`.
 
 Run the receiver with:
 
@@ -40,7 +40,7 @@ INFRAI_WEBHOOK_SECRET='a-long-random-secret' \
   ./scripts/run-local.sh build-42 docs.customer.example
 ```
 
-Start it before `onboard`, with the same build ID and domain. The receiver checks the HMAC-SHA256 signature before decoding the notification. A verified domain changes matching builds from `waiting_for_domain` to `released`; unrelated builds stay put. In a real control plane, load pending builds from your datastore instead of the compact in-memory ledger used here.
+Start it before `onboard`, with the same build ID and domain. The receiver checks the HMAC-SHA256 signature before decoding the notification. A verified domain changes matching builds from `waiting_for_domain` to `released`; unrelated builds stay put. In a real control plane, load pending builds from your datastore in place of the compact in-memory ledger used here.
 
 ## Check the release decision
 
@@ -52,7 +52,7 @@ cargo test --offline
 
 ## What this replaces
 
-We used to run Cloudflare for SaaS plus an in-house poller. That meant two signups and two sets of credentials: one for the DNS provider and one for Infrai's account control plane. You also wrote, deployed, and watched the polling worker yourself. Missed jobs traced back to that poller. Here, one credential covers domain writes and the webhook registration, and the notification drives the next release operation.
+The alternative stack, Cloudflare for SaaS plus an in-house poller, would require two signups and two sets of credentials: one for the DNS provider and one for Infrai's account control plane. You would also write, deploy, and observe the polling worker yourself. Here, one credential covers domain writes and the webhook registration, and the notification drives the next release operation.
 
 ## Service boundary
 
